@@ -3,6 +3,7 @@ const app = express();
 const cors = require('cors');
 let jwt = require('jsonwebtoken');
 require('dotenv').config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const port = process.env.PORT || 5000;
 
 app.use(cors());
@@ -26,6 +27,7 @@ async function run() {
         const menuCollection = client.db('BistroDB').collection('menu')
         const reviewCollection = client.db('BistroDB').collection('reviews')
         const cartCollection = client.db('BistroDB').collection('cart')
+        const paymentCollection = client.db('BistroDB').collection('payment')
 
 
         // jwt related api
@@ -64,6 +66,47 @@ async function run() {
             }
             next();
         }
+
+        // payment intent
+        app.post('/create-payment-intent', async (req, res) => {
+            const { price } = req.body;
+            const amount = parseInt(price * 100);
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types: ['card']
+            });
+
+            res.send({
+                clientSecret: paymentIntent.client_secret
+            })
+        })
+
+        app.post('/payment', async (req, res) => {
+            const payment = req.body;
+            const paymentResult = await paymentCollection.insertOne(payment);
+
+            console.log('payment info', payment);
+            const query = {
+                _id: {
+                    $in: payment.cartId.map(id => new ObjectId(id))
+                }
+            };
+            const deleteResult = await cartCollection.deleteMany(query);
+            res.send({ paymentResult, deleteResult });
+
+        })
+
+        app.get('/payment/:email', verifyToken, async (req, res) => {
+            const query = { email: req.params.email };
+            if (req.params.email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result);
+        })
+
 
         // user related api
         app.post('/users', async (req, res) => {
